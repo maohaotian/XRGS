@@ -1,0 +1,10 @@
+data/
+output/
+Tracking-Anything-with-DEVA/example/
+Tracking-Anything-with-DEVA/Grounded-Segment-Anything/
+Tracking-Anything-with-DEVA/output_2d_inpaint_mask/
+Tracking-Anything-with-DEVA/saves/
+lama/big-lama/
+lama/hub/
+lama/outputs/
+**/__pycache__/

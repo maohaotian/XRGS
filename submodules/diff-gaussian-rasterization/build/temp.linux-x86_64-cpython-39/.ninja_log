@@ -1,0 +1,6 @@
+# ninja log v5
+1	3537	1721896282350409751	/home/maohaotian/gaussian-grouping/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-39/cuda_rasterizer/forward.o	b2d24bb01d561cd3
+0	3745	1721896282558409332	/home/maohaotian/gaussian-grouping/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-39/cuda_rasterizer/backward.o	381a10ec7875b0ab
+1	8310	1721896287122400224	/home/maohaotian/gaussian-grouping/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-39/cuda_rasterizer/rasterizer_impl.o	f9174f8be5744413
+1	18485	1721896297290380626	/home/maohaotian/gaussian-grouping/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-39/ext.o	b5c35ad1f89a0bf4
+1	40687	1721896319494341057	/home/maohaotian/gaussian-grouping/submodules/diff-gaussian-rasterization/build/temp.linux-x86_64-cpython-39/rasterize_points.o	5639ea8ae0128d02

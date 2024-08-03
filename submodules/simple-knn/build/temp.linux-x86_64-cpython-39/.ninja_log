@@ -1,0 +1,4 @@
+# ninja log v5
+0	10466	1721896341986305331	/home/maohaotian/gaussian-grouping/submodules/simple-knn/build/temp.linux-x86_64-cpython-39/simple_knn.o	1ac8946b20fc7edf
+0	18231	1721896349750293984	/home/maohaotian/gaussian-grouping/submodules/simple-knn/build/temp.linux-x86_64-cpython-39/ext.o	305584a2fc010397
+0	41132	1721896372646263360	/home/maohaotian/gaussian-grouping/submodules/simple-knn/build/temp.linux-x86_64-cpython-39/spatial.o	7fd985737233d162
