@@ -11,7 +11,7 @@ def add_ext_eval_args(parser: ArgumentParser):
     parser.add_argument('--GROUNDING_DINO_CHECKPOINT_PATH',
                         default='./saves/groundingdino_swint_ogc.pth')
 
-    parser.add_argument('--DINO_THRESHOLD', default=0.35, type=float)
+    parser.add_argument('--DINO_THRESHOLD', default=0.35, type=float) # add threshold about segmentation
     parser.add_argument('--DINO_NMS_THRESHOLD', default=0.8, type=float)
 
     # Segment Anything (SAM) models

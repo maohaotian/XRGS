@@ -71,26 +71,34 @@ def points_inside_convex_hull(point_cloud, mask, remove_outliers=True, outlier_f
 
 def removal_setup(opt, model_path, iteration, views, gaussians, pipeline, background, classifier, selected_obj_ids, cameras_extent, removal_thresh):
     selected_obj_ids = torch.tensor(selected_obj_ids).cuda()
-    with torch.no_grad():
-        logits3d = classifier(gaussians._objects_dc.permute(2,0,1))
-        prob_obj3d = torch.softmax(logits3d,dim=0)
-        mask = prob_obj3d[selected_obj_ids, :, :] > removal_thresh
+    all_masks=[]
+    for selected_id in selected_obj_ids:
+        selected_id = selected_id.unsqueeze(0)
+        with torch.no_grad():
+            logits3d = classifier(gaussians._objects_dc.permute(2,0,1))
+            prob_obj3d = torch.softmax(logits3d,dim=0)
+            mask = prob_obj3d[selected_id, :, :] > removal_thresh            
+            mask3d = mask.any(dim=0).squeeze()
 
-        
-        mask3d = mask.any(dim=0).squeeze()
+            mask3d_convex = points_inside_convex_hull(gaussians._xyz.detach(),mask3d,outlier_factor=1.0)
+            mask3d = torch.logical_or(mask3d,mask3d_convex)
 
-        mask3d_convex = points_inside_convex_hull(gaussians._xyz.detach(),mask3d,outlier_factor=1.0)
-        mask3d = torch.logical_or(mask3d,mask3d_convex)
-
-        mask3d = mask3d.float()[:,None,None]
+            mask3d = mask3d.float()[:,None,None]
+            all_masks.append(mask3d)
+            # print("mask3d:",mask3d,mask3d.shape)
+    all_masks_tensor = torch.stack(all_masks, dim=0)
+    # all_masks = torch.cat(all_masks, dim=0)
+    # print("allmask:",all_masks_tensor,all_masks_tensor.shape)
+    final_mask3d = all_masks_tensor.any(dim=0).float()
+    # print("final mask:",final_mask3d,final_mask3d.shape)
 
     point_cloud_path = os.path.join(model_path, "point_cloud_object_removal/iteration_{}".format(iteration))
-    seg_cloud_path = os.path.join(model_path, "point_cloud_seg")
+    seg_cloud_path = os.path.join(model_path, "point_cloud_seg") # all segmented objects, using mask to generate later
     # save segmented gaussians
-    gaussians.save_selected_ply(os.path.join(seg_cloud_path, "point_cloud.ply"), mask3d)
+    gaussians.save_selected_ply(os.path.join(seg_cloud_path, "point_cloud.ply"), final_mask3d)
     
     # fix some gaussians
-    gaussians.removal_setup(opt,mask3d)
+    gaussians.removal_setup(opt,final_mask3d)
     
     
     # save gaussians
@@ -187,9 +195,13 @@ def move_to_data(model_path, name, iteration, data_path):
     out_dir = os.path.join(data_path,"inpaint_object_mask_255")
     
     for dir in in_dirs:
+        if(os.path.exists(os.path.join(out_dir,dir))):
+            shutil.rmtree(os.path.join(out_dir,dir))
         shutil.move(os.path.join(source_dir,dir),out_dir)
     
     for name in in_names:
+        if(os.path.exists(os.path.join(out_dir,name))):
+            shutil.rmtree(os.path.join(out_dir,name))
         shutil.move(os.path.join(source_dir,name),out_dir)
 
     # for whole masks
@@ -221,7 +233,7 @@ def removal(dataset : ModelParams, iteration : int, pipeline : PipelineParams, s
     scene = Scene(dataset, gaussians, load_iteration='_object_removal/iteration_'+str(scene.loaded_iter), shuffle=False)
     # additional: save removed objects
     # this is used for later inpainting
-    save_mask_binary(dataset.model_path,"train",scene.loaded_iter, scene.getTrainCameras(), select_obj_id)
+    save_mask_binary(dataset.model_path,"train",scene.loaded_iter, scene.getTrainCameras(), select_obj_id) # no need to save whole masks
 
     # this is used for other modification
     for i in select_obj_id:

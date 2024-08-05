@@ -158,8 +158,8 @@ args = get_combined_args(parser)
 print(args)
 dataset = model.extract(args)
 gaussians = GaussianModel(dataset.sh_degree)
-# scene = Scene(dataset, gaussians, load_iteration="_seg", shuffle=False)
-scene = Scene(dataset, gaussians, load_iteration="/iteration_30000", shuffle=False) # test seg with SAGA 
+scene = Scene(dataset, gaussians, load_iteration="_seg", shuffle=False)
+# scene = Scene(dataset, gaussians, load_iteration="/iteration_30000", shuffle=False) # test seg with SAGA 
 
 cameras = scene.getTrainCameras()
 
@@ -208,7 +208,7 @@ for dir in dirs: # segment each part separately. or segment all of them as whole
 
         multiview_masks.append(point_mask.unsqueeze(-1))
 
-    _, final_mask = ensemble(multiview_masks,threshold=0.1) # adjust threshold here. set to 0.7 can fail when too many camera views not set to objects
+    _, final_mask = ensemble(multiview_masks,threshold=0.45) # adjust threshold here. set to 0.7 can fail when too many camera views not set to objects
 
 
     save_path = os.path.join(scene.model_path, 'point_cloud/iteration_30000/point_cloud_seg_clear{}.ply'.format(dir))
@@ -223,15 +223,15 @@ for dir in dirs: # segment each part separately. or segment all of them as whole
     save_gs(gaussians, final_mask, save_gd_path)
     result_mask = torch.cat((result_mask, final_mask), dim=0)
 
-# save left points
-result_mask = torch.unique(result_mask)
-length = xyz.shape[0]
-inverse_indices = torch.arange(length)
-inverse_mask = ~torch.isin(inverse_indices, result_mask)
-inverse_indices = inverse_indices[inverse_mask]
+# # save left points
+# result_mask = torch.unique(result_mask)
+# length = xyz.shape[0]
+# inverse_indices = torch.arange(length)
+# inverse_mask = ~torch.isin(inverse_indices, result_mask)
+# inverse_indices = inverse_indices[inverse_mask]
 
-save_others_path = os.path.join(scene.model_path, 'point_cloud/iteration_30000/point_cloud_seg_others.ply')
-save_gs(gaussians, inverse_indices, save_others_path)
+# save_others_path = os.path.join(scene.model_path, 'point_cloud/iteration_30000/point_cloud_seg_others.ply')
+# save_gs(gaussians, inverse_indices, save_others_path)
 
 #####show result 
 # other_gaussians = GaussianModel(dataset.sh_degree)
