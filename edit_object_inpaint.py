@@ -107,8 +107,9 @@ def finetune_inpaint(opt, model_path, iteration, views, gaussians, pipeline, bac
             # use compicated method here. method1
             gt_image_path = os.path.join(image_truth_path,viewpoint_cam.image_name+".jpg")
             if(not os.path.exists(gt_image_path)):
-                gt_image_path = os.path.join(image_truth_path,viewpoint_cam.image_name+".png")    
-            gt_image = torch.Tensor(np.array(Image.open(gt_image_path))).permute(2,0,1).clamp(0.0,1.0).to("cuda")
+                gt_image_path = os.path.join(image_truth_path,viewpoint_cam.image_name+".png")
+            gt_image_array = np.array(Image.open(gt_image_path))
+            gt_image = torch.Tensor(gt_image_array.astype(np.float32) / 255.0).permute(2,0,1).clamp(0.0,1.0).to("cuda")
             # end here
             
             Ll1 = masked_l1_loss(image, gt_image, ~mask2d) # this can use `all mask`。
