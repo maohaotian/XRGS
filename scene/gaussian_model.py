@@ -48,6 +48,7 @@ class GaussianModel:
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
+        self._normals = torch.empty(0)
         self._objects_dc = torch.empty(0)
         self.num_objects = 16
         self.max_radii2D = torch.empty(0)
@@ -370,6 +371,20 @@ class GaussianModel:
             l.append('obj_dc_{}'.format(i))
         return l
 
+    def construct_list_of_attributes_origin(self):
+        l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
+        # All channels except the 3 DC
+        for i in range(self._features_dc.shape[1]*self._features_dc.shape[2]):
+            l.append('f_dc_{}'.format(i))
+        for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
+            l.append('f_rest_{}'.format(i))
+        l.append('opacity')
+        for i in range(self._scaling.shape[1]):
+            l.append('scale_{}'.format(i))
+        for i in range(self._rotation.shape[1]):
+            l.append('rot_{}'.format(i))
+        return l
+
     def save_ply(self, path):
         mkdir_p(os.path.dirname(path))
 
@@ -463,6 +478,56 @@ class GaussianModel:
         self._objects_dc = nn.Parameter(torch.tensor(objects_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
+
+    def load_ply_origin(self, path):
+        plydata = PlyData.read(path)
+
+        xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
+                        np.asarray(plydata.elements[0]["y"]),
+                        np.asarray(plydata.elements[0]["z"])),  axis=1)
+
+        normals = np.stack((np.asarray(plydata.elements[0]["nx"]),
+                np.asarray(plydata.elements[0]["ny"]),
+                np.asarray(plydata.elements[0]["nz"])), axis=1)
+                
+        opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
+
+        features_dc = np.zeros((xyz.shape[0], 3, 1))
+        features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
+        features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
+        features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
+
+        extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
+        extra_f_names = sorted(extra_f_names, key = lambda x: int(x.split('_')[-1]))
+        assert len(extra_f_names)==3*(self.max_sh_degree + 1) ** 2 - 3
+        features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
+        for idx, attr_name in enumerate(extra_f_names):
+            features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
+        # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
+        features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
+
+        scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
+        scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))
+        scales = np.zeros((xyz.shape[0], len(scale_names)))
+        for idx, attr_name in enumerate(scale_names):
+            scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
+
+        rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
+        rot_names = sorted(rot_names, key = lambda x: int(x.split('_')[-1]))
+        rots = np.zeros((xyz.shape[0], len(rot_names)))
+        for idx, attr_name in enumerate(rot_names):
+            rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
+
+        self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._normals = nn.Parameter(torch.tensor(normals, dtype=torch.float, device="cuda").requires_grad_(True))  # 新增法向量属性
+        self._features_dc = nn.Parameter(torch.tensor(features_dc, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+        self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").transpose(1, 2).contiguous().requires_grad_(True))
+        self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
+
+        self.active_sh_degree = self.max_sh_degree
+    
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
@@ -619,3 +684,121 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+    
+    def get_attributes(self):
+        return (self._xyz, self._features_dc, self._features_rest, 
+                self._scaling, self._rotation, self._opacity, self._normals)
+
+
+    def fill_array(self, arr, num_particles, selected_value):
+        current_num = arr.shape[0]
+        num_to_fill = num_particles - current_num
+        if num_to_fill <= 0:
+            return arr
+        # 获取 selected_value 的形状
+        selected_shape = selected_value.shape
+        # 创建填充值
+        fill_values = np.tile(selected_value, (num_to_fill,) + (1,) * len(selected_shape))
+        # 拼接原数组和填充值
+        filled_array = np.concatenate((arr, fill_values), axis=0)
+        return filled_array
+
+    #根据position的内容填充ply文件
+    #多出粒子的其余属性随机挑选一个非填充粒子的属性填充
+    def save_filled_ply_by_pos(self, path, position):
+        mkdir_p(os.path.dirname(path))
+
+        xyz = position.detach().cpu().numpy()
+        normals = np.zeros_like(xyz)
+        f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        opacities = self._opacity.detach().cpu().numpy()
+        scale = self._scaling.detach().cpu().numpy()
+        rotation = self._rotation.detach().cpu().numpy()
+        
+        # print(f"xyz shape: {xyz.shape}")
+        # print(f"normals shape: {normals.shape}")
+        # print(f"f_dc shape: {f_dc.shape}")
+        # print(f"f_rest shape: {f_rest.shape}")
+        # print(f"opacities shape: {opacities.shape}")
+        # print(f"scale shape: {scale.shape}")
+        # print(f"rotation shape: {rotation.shape}")
+
+        particle_num = max(xyz.shape[0], f_dc.shape[0])
+        randomIndex = int(f_dc.shape[0]/2)
+
+        filled_xyz_value = xyz[randomIndex]
+        filled_normal_value = normals[randomIndex]
+        filled_f_dc_value = f_dc[randomIndex]
+        filled_f_rest_value = f_rest[randomIndex]
+        filled_opacities_value = opacities[randomIndex]
+        filled_scale_value = scale[randomIndex]
+        filled_rotation_value = rotation[randomIndex]
+
+        if(xyz.shape[0] > f_dc.shape[0]):
+            filled_f_dc = self.fill_array(f_dc, particle_num,filled_f_dc_value)
+            filled_f_rest = self.fill_array(f_rest, particle_num,filled_f_rest_value)
+            filled_opacities = self.fill_array(opacities, particle_num,filled_opacities_value)
+            filled_scale = self.fill_array(scale, particle_num,filled_scale_value)
+            filled_rotation = self.fill_array(rotation, particle_num,filled_rotation_value)
+            filled_normals = self.fill_array(normals, particle_num,filled_normal_value)
+            filled_xyz = xyz
+        else:
+            filled_f_dc = f_dc
+            filled_f_rest = f_rest
+            filled_opacities = opacities
+            filled_scale = scale
+            filled_rotation = rotation
+            filled_normals = normals
+            filled_xyz = self.fill_array(xyz, particle_num,filled_xyz_value)
+
+
+        # print("Finish fill!!")
+        # print(f"fill xyz shape: {filled_xyz.shape}")
+        # print(f"fill normals shape: {filled_normals.shape}")
+        # print(f"fill f_dc shape: {filled_f_dc.shape}")
+        # print(f"fill f_rest shape: {filled_f_rest.shape}")
+        # print(f"fill opacities shape: {filled_opacities.shape}")
+        # print(f"fill scale shape: {filled_scale.shape}")
+        # print(f"fill rotation shape: {filled_rotation.shape}")
+
+
+        dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes_origin()]
+
+        elements = np.empty(filled_xyz.shape[0], dtype=dtype_full)
+        attributes = np.concatenate((filled_xyz, filled_normals, filled_f_dc,
+         filled_f_rest, filled_opacities, filled_scale, filled_rotation), axis=1)
+        elements[:] = list(map(tuple, attributes))
+        el = PlyElement.describe(elements, 'vertex')
+        PlyData([el]).write(path)       
+
+    #填充的ply文件信息即为函数参数
+    def save_filled_ply_by_attributes(self, path, pos, shs, opacity,cov,scale, rotation):
+        mkdir_p(os.path.dirname(path))
+
+        # print("Save filled ply by attributes")
+        # print(f"pos shape : {pos.shape}")
+        # print(f"shs shape : {shs.shape}")
+        # print(f"opacity shape : {opacity.shape}")
+        # print(f"cov shape : {cov.shape}")
+        # print(f"scale shape : {scale.shape}")
+        # print(f"rotation shape : {rotation.shape}")
+        
+
+        xyz = pos.detach().cpu().numpy()
+        normals = np.zeros_like(xyz)
+        f_dc_torch = shs[:,:1,:]
+        f_rest_torch = shs[:,1:,:]
+        f_dc = f_dc_torch.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        f_rest = f_rest_torch.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
+        opacities = opacity.detach().cpu().numpy()
+        scale = scale.detach().cpu().numpy()
+        rotation = rotation.detach().cpu().numpy()
+
+        dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes_origin()]
+
+        elements = np.empty(xyz.shape[0], dtype=dtype_full)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
+        elements[:] = list(map(tuple, attributes))
+        el = PlyElement.describe(elements, 'vertex')
+        PlyData([el]).write(path)       
