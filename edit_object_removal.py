@@ -116,7 +116,10 @@ def save_mask_binary(model_path, name, iteration, views, selected_ids,  sub_dir 
         gt_objects = view.objects
         makedirs(mask_obj_path, exist_ok=True)
         mask_binary = obj2mask_binary(gt_objects.cpu().numpy().astype(np.uint8),selected_ids)
-        Image.fromarray(mask_binary).save(os.path.join(mask_obj_path, '{0:05d}'.format(idx) + ".png"))
+        mask_binary = np.where(mask_binary > 0, 255, 0).astype(np.uint8)
+        kernel = np.ones((3, 3), np.uint8)
+        mask_binary = cv2.morphologyEx(mask_binary, cv2.MORPH_OPEN, kernel)
+        Image.fromarray(mask_binary, mode="L").save(os.path.join(mask_obj_path, '{0:05d}'.format(idx) + ".png"))
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background, classifier):
     render_path = os.path.join(model_path, name, "ours{}".format(iteration), "renders")

@@ -16,6 +16,8 @@ def l1_loss(network_output, gt):
     return torch.abs((network_output - gt)).mean()
 
 def masked_l1_loss(network_output, gt, mask):
+    if(mask.sum() == 0):
+        return 0
     mask = mask.float()[None,:,:].repeat(gt.shape[0],1,1)
     loss = torch.abs((network_output - gt)) * mask
     loss = loss.sum() / mask.sum()

@@ -66,15 +66,20 @@ for i,name in enumerate(sorted(os.listdir(image_dir))):
     #generate bounding mask here
         bounding_mask = np.zeros_like(gray_mask,dtype=bool)
         for sub_index,sub_dir in enumerate(dirs):
-            sub_bounding_mask = cv2.imread(os.path.join(sub_dir,names[sub_index][i]))
+            sub_bounding_mask = cv2.imread(os.path.join(sub_dir,names[sub_index][i]), cv2.IMREAD_GRAYSCALE)
             if np.all(np.equal(sub_bounding_mask,0)):
                 continue
-            bounding = mask_to_bbox(sub_bounding_mask)
-            bounding_mask[bounding[1]:bounding[3],bounding[0]:bounding[2]] = True
+            # bounding = mask_to_bbox(sub_bounding_mask)
+            # bounding_mask[bounding[1]:bounding[3],bounding[0]:bounding[2]] = True
             # bounding_mask_save = bounding_mask.astype(np.uint8) * 255
-            # cv2.imwrite(os.path.join(test_dir,"_"+names[sub_index][i]), bounding_mask_save)
+            _, sub_bounding_mask = cv2.threshold(sub_bounding_mask, 128, 255, cv2.THRESH_BINARY_INV)
+            # cv2.imwrite(os.path.join("../test",f"{i}.png"), sub_bounding_mask)
+            # non_binary_indices = np.where((sub_bounding_mask != 0) & (sub_bounding_mask != 255))
+            sub_bounding_mask = cv2.bitwise_not(sub_bounding_mask)
+            bounding_mask[sub_bounding_mask!=0] = True
         
         bounding_mask = bounding_mask.astype(np.uint8) * 255
+        # cv2.imwrite(os.path.join("../test",f"{i}.jpg"), bounding_mask)
         binary_mask = binary_mask & bounding_mask
 
     # You can change the mask dilation kernel size and dilated_iterations according to your dataset.

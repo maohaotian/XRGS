@@ -94,8 +94,9 @@ def finetune_inpaint(opt, model_path, iteration, views, gaussians, pipeline, bac
     
     # ignore if there is no mask ?（must!）
     for iteration in range(iterations):
-        ineffective_flag = True
+        ineffective_flag = True #can't ignore part of the image
         while(ineffective_flag):
+            ineffective_flag = False # add to jump the loop
             viewpoint_stack = views.copy()
             viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
             render_pkg = render(viewpoint_cam, gaussians, pipeline, background)
@@ -109,13 +110,15 @@ def finetune_inpaint(opt, model_path, iteration, views, gaussians, pipeline, bac
             if(not os.path.exists(gt_image_path)):
                 gt_image_path = os.path.join(image_truth_path,viewpoint_cam.image_name+".png")
             gt_image_array = np.array(Image.open(gt_image_path))
-            gt_image = torch.Tensor(gt_image_array.astype(np.float32) / 255.0).permute(2,0,1).clamp(0.0,1.0).to("cuda")
+            gt_original_image = torch.Tensor(gt_image_array.astype(np.float32) / 255.0).permute(2,0,1).clamp(0.0,1.0).to("cuda")
             # end here
             
-            Ll1 = masked_l1_loss(image, gt_image, ~mask2d) # this can use `all mask`。
+            # Ll1 = masked_l1_loss(image, gt_image, ~mask2d) # this can use `all mask`。
 
             K=2
             lpips_loss = 0
+
+            bounding_box_mask = torch.zeros_like(mask2d,dtype=torch.bool).to("cuda")
 
             for selected_id in selected_obj_ids:
                 single_mask_path = os.path.join(mask_path,str(selected_id),viewpoint_cam.image_name+".jpg")
@@ -124,11 +127,12 @@ def finetune_inpaint(opt, model_path, iteration, views, gaussians, pipeline, bac
                 mask_single_2d = mask_single > 128
                 if(torch.all(mask_single_2d.eq(0))):
                     continue
-                ineffective_flag = False
                 bbox = mask_to_bbox(mask_single_2d)
                 # print("bbox:",bbox)
                 if(not (bbox[2] - bbox[0] >=32 and bbox[3] - bbox[1] >=32)):
                     continue
+                ineffective_flag = False
+                # print("iteration name bbox:",iteration, viewpoint_cam.image_name, bbox)
                 cropped_image = crop_using_bbox(image, bbox)
                 cropped_gt_image = crop_using_bbox(gt_image, bbox)
                 # K = 2
@@ -136,10 +140,20 @@ def finetune_inpaint(opt, model_path, iteration, views, gaussians, pipeline, bac
                 gt_patches = divide_into_patches(cropped_gt_image[None, ...], K)
                 # print("input size",rendering_patches.shape,gt_patches.shape)
                 lpips_loss += LPIPS(rendering_patches.squeeze()*2-1,gt_patches.squeeze()*2-1).mean()
+                bounding_box_mask[bbox[1]:bbox[3],bbox[0]:bbox[2]] = True
 
             if(ineffective_flag):
                 continue
+            
+            inverse_mask2d = ~mask2d
+            inpaint_cal_mask = inverse_mask2d & bounding_box_mask
+            original_cal_mask = ~bounding_box_mask
 
+            # Image.fromarray(inpaint_cal_mask.cpu().numpy()).save("./test/{}_inpaint_cal_mask_{}.png".format(iteration,viewpoint_cam.image_name))
+            # Image.fromarray(original_cal_mask.cpu().numpy()).save("./test/{}_original_mask_{}.png".format(iteration,viewpoint_cam.image_name))
+            # Image.fromarray(bounding_box_mask.cpu().numpy()).save("./test/{}_bounding_{}.png".format(iteration,viewpoint_cam.image_name))
+            Ll1 = (masked_l1_loss(image, gt_image, inpaint_cal_mask) * inpaint_cal_mask.sum() + masked_l1_loss(image, gt_original_image, original_cal_mask) * original_cal_mask.sum())/(inpaint_cal_mask.sum() + original_cal_mask.sum())
+            # Ll1 = masked_l1_loss(image, gt_image, inverse_mask2d)
             # using three level loss: method2 here.
 
             # print("lpips_loss:",lpips_loss)
@@ -291,7 +305,7 @@ if __name__ == "__main__":
     args.resolution = config.get("r", 1)
     args.lambda_dssim = config.get("lambda_dlpips", 0.5)
     args.finetune_iteration = config.get("finetune_iteration", 10_000)
-    args.density_iteration = config.get("density_iteration", 3000)
+    args.density_iteration = config.get("density_iteration", 5000)
 
     
     # Initialize system state (RNG)

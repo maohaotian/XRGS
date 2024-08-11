@@ -208,7 +208,7 @@ for dir in dirs: # segment each part separately. or segment all of them as whole
 
         multiview_masks.append(point_mask.unsqueeze(-1))
 
-    _, final_mask = ensemble(multiview_masks,threshold=0.45) # adjust threshold here. set to 0.7 can fail when too many camera views not set to objects
+    _, final_mask = ensemble(multiview_masks,threshold=0.2) # adjust threshold here. set to 0.7 can fail when too many camera views not set to objects
 
 
     save_path = os.path.join(scene.model_path, 'point_cloud/iteration_30000/point_cloud_seg_clear{}.ply'.format(dir))
