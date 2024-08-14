@@ -152,13 +152,15 @@ def finetune_inpaint(opt, model_path, iteration, views, gaussians, pipeline, bac
             # Image.fromarray(inpaint_cal_mask.cpu().numpy()).save("./test/{}_inpaint_cal_mask_{}.png".format(iteration,viewpoint_cam.image_name))
             # Image.fromarray(original_cal_mask.cpu().numpy()).save("./test/{}_original_mask_{}.png".format(iteration,viewpoint_cam.image_name))
             # Image.fromarray(bounding_box_mask.cpu().numpy()).save("./test/{}_bounding_{}.png".format(iteration,viewpoint_cam.image_name))
-            Ll1 = (masked_l1_loss(image, gt_image, inpaint_cal_mask) * inpaint_cal_mask.sum() + masked_l1_loss(image, gt_original_image, original_cal_mask) * original_cal_mask.sum())/(inpaint_cal_mask.sum() + original_cal_mask.sum())
-            # Ll1 = masked_l1_loss(image, gt_image, inverse_mask2d)
+            # Ll1 = (masked_l1_loss(image, gt_image, inpaint_cal_mask) * inpaint_cal_mask.sum() + masked_l1_loss(image, gt_original_image, original_cal_mask) * original_cal_mask.sum())/(inpaint_cal_mask.sum() + original_cal_mask.sum())
+            Ll1 = masked_l1_loss(image, gt_image, mask2d) + masked_l1_loss(image,gt_original_image,inverse_mask2d) #Ll1 is much better
+
             # using three level loss: method2 here.
 
             # print("lpips_loss:",lpips_loss)
-            lpips_loss = lpips_loss / len(selected_obj_ids)
-            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * lpips_loss
+            # lpips_loss = lpips_loss / len(selected_obj_ids)
+            # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * lpips_loss
+            loss = Ll1
             loss.backward()
 
             with torch.no_grad():

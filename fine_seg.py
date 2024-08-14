@@ -18,7 +18,7 @@ from seg_utils import conv2d_matrix, update, compute_ratios
 from plyfile import PlyData, PlyElement
 import cv2
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 def get_combined_args(parser : ArgumentParser):
     # cmdlne_string = sys.argv[1:]
@@ -147,109 +147,112 @@ def gaussian_decomp(gaussians, viewpoint_camera, input_mask, indices_mask):
 
     return decomp_gaussians
 
-parser = ArgumentParser(description="Testing script parameters")
-model = ModelParams(parser, sentinel=True)
-pipeline = PipelineParams(parser)
+if __name__ == "__main__":
+    #-m 
 
-parser.add_argument("-t","--gd_interval", default=10, type=int, help='interval of performing gaussian decomposition')
-parser.add_argument("--single",action='store_true' ,help='whether decomposition for each component')
+    parser = ArgumentParser(description="Testing script parameters")
+    model = ModelParams(parser, sentinel=True)
+    pipeline = PipelineParams(parser)
 
-args = get_combined_args(parser)
-print(args)
-dataset = model.extract(args)
-gaussians = GaussianModel(dataset.sh_degree)
-scene = Scene(dataset, gaussians, load_iteration="_seg", shuffle=False)
-# scene = Scene(dataset, gaussians, load_iteration="/iteration_30000", shuffle=False) # test seg with SAGA 
+    parser.add_argument("-t","--gd_interval", default=10, type=int, help='interval of performing gaussian decomposition')
+    parser.add_argument("--single",action='store_true' ,help='whether decomposition for each component')
 
-cameras = scene.getTrainCameras()
+    args = get_combined_args(parser)
+    print(args)
+    dataset = model.extract(args)
+    gaussians = GaussianModel(dataset.sh_degree)
+    scene = Scene(dataset, gaussians, load_iteration="_seg", shuffle=False)
+    # scene = Scene(dataset, gaussians, load_iteration="/iteration_30000", shuffle=False) # test seg with SAGA 
 
-
-mask_path = os.path.join(args.source_path,"inpaint_object_mask_255")
-
-file_extensions = set()
-dirs = [] # save dir name
-for filename in os.listdir(mask_path):
-    if(os.path.isdir(os.path.join(mask_path,filename))):
-        dirs.append(filename)
-        continue # in case it is a subdirectory
-    file_extension = os.path.splitext(filename)[1].lower()
-    file_extensions.add(file_extension)
-
-if (len(file_extensions) != 1):
-    print("warninng: not just one type of extension")
-
-ext = file_extension # acquire last one
-
-xyz = gaussians.get_xyz
-
-result_mask = torch.empty(0, dtype=torch.long)
-
-if(args.single):
-    dirs=[""]
-for dir in dirs: # segment each part separately. or segment all of them as whole
-    sam_masks = []
-    multiview_masks = []
-    for i, view in enumerate(cameras):
-        image_name = view.image_name+ext
-        img_path = os.path.join(mask_path,dir, image_name)
-        img = Image.open(img_path)
-        mask_array= np.asarray(img,dtype=np.uint8)
-        mask_array = np.where(mask_array>127,255,0).astype(np.uint8)
-
-        if len(mask_array.shape) != 2:
-            mask_array = torch.from_numpy(mask_array).squeeze(-1).to("cuda")
-        else:
-            mask_array = torch.from_numpy(mask_array).to("cuda")
-
-        mask_array = (mask_array/255).long()
-        sam_masks.append(mask_array)
-
-        point_mask, indices_mask = mask_inverse(xyz, view, mask_array)
-
-        multiview_masks.append(point_mask.unsqueeze(-1))
-
-    _, final_mask = ensemble(multiview_masks,threshold=0.2) # adjust threshold here. set to 0.7 can fail when too many camera views not set to objects
+    cameras = scene.getTrainCameras()
 
 
-    save_path = os.path.join(scene.model_path, 'point_cloud/iteration_30000/point_cloud_seg_clear{}.ply'.format(dir))
-    save_gs(gaussians, final_mask, save_path)    
+    mask_path = os.path.join(args.source_path,"inpaint_object_mask_255")
 
-    for i, view in enumerate(cameras):
-        if args.gd_interval != -1 and i % args.gd_interval == 0:
-            input_mask = sam_masks[i]
-            gaussians = gaussian_decomp(gaussians, view, input_mask, final_mask.to('cuda'))
+    file_extensions = set()
+    dirs = [] # save dir name
+    for filename in os.listdir(mask_path):
+        if(os.path.isdir(os.path.join(mask_path,filename))):
+            dirs.append(filename)
+            continue # in case it is a subdirectory
+        file_extension = os.path.splitext(filename)[1].lower()
+        file_extensions.add(file_extension)
 
-    save_gd_path = os.path.join(scene.model_path, 'point_cloud/iteration_30000/point_cloud_seg_gd{}.ply'.format(dir))
-    save_gs(gaussians, final_mask, save_gd_path)
-    result_mask = torch.cat((result_mask, final_mask), dim=0)
+    if (len(file_extensions) != 1):
+        print("warninng: not just one type of extension")
 
-# # save left points
-# result_mask = torch.unique(result_mask)
-# length = xyz.shape[0]
-# inverse_indices = torch.arange(length)
-# inverse_mask = ~torch.isin(inverse_indices, result_mask)
-# inverse_indices = inverse_indices[inverse_mask]
+    ext = file_extension # acquire last one
 
-# save_others_path = os.path.join(scene.model_path, 'point_cloud/iteration_30000/point_cloud_seg_others.ply')
-# save_gs(gaussians, inverse_indices, save_others_path)
+    xyz = gaussians.get_xyz
 
-#####show result 
-# other_gaussians = GaussianModel(dataset.sh_degree)
-# other_gaussians.load_ply(save_others_path)
-# bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
-# background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+    result_mask = torch.empty(0, dtype=torch.long)
 
-# other_save_path = os.path.join(scene.model_path,'train/ours_others')
-# if not os.path.exists(other_save_path):
-#     os.mkdir(other_save_path)
+    if(args.single):
+        dirs=[""]
+    for dir in dirs: # segment each part separately. or segment all of them as whole
+        sam_masks = []
+        multiview_masks = []
+        for i, view in enumerate(cameras):
+            image_name = view.image_name+ext
+            img_path = os.path.join(mask_path,dir, image_name)
+            img = Image.open(img_path)
+            mask_array= np.asarray(img,dtype=np.uint8)
+            mask_array = np.where(mask_array>127,255,0).astype(np.uint8)
 
-# for idx in range(len(cameras)):
-#     image_name = cameras[idx].image_name
-#     view = cameras[idx]
+            if len(mask_array.shape) != 2:
+                mask_array = torch.from_numpy(mask_array).squeeze(-1).to("cuda")
+            else:
+                mask_array = torch.from_numpy(mask_array).to("cuda")
 
-#     render_pkg = render(view, other_gaussians, pipeline, background)
-#     # get sam output mask
-#     render_image = render_pkg["render"].permute(1, 2, 0).detach().cpu().numpy()
-#     render_image = (255 * np.clip(render_image, 0, 1)).astype(np.uint8)
-#     render_image = cv2.cvtColor(render_image, cv2.COLOR_RGB2BGR)
-#     cv2.imwrite(os.path.join(other_save_path, '{}.jpg'.format(image_name)), render_image)
+            mask_array = (mask_array/255).long()
+            sam_masks.append(mask_array)
+
+            point_mask, indices_mask = mask_inverse(xyz, view, mask_array)
+
+            multiview_masks.append(point_mask.unsqueeze(-1))
+
+        _, final_mask = ensemble(multiview_masks,threshold=0.8) # adjust threshold here. set to 0.7 can fail when too many camera views not set to objects
+
+
+        save_path = os.path.join(scene.model_path, 'point_cloud/iteration_30000/point_cloud_seg_clear{}.ply'.format(dir))
+        save_gs(gaussians, final_mask, save_path)    
+
+        for i, view in enumerate(cameras):
+            if args.gd_interval != -1 and i % args.gd_interval == 0:
+                input_mask = sam_masks[i]
+                gaussians = gaussian_decomp(gaussians, view, input_mask, final_mask.to('cuda'))
+
+        save_gd_path = os.path.join(scene.model_path, 'point_cloud/iteration_30000/point_cloud_seg_gd{}.ply'.format(dir))
+        save_gs(gaussians, final_mask, save_gd_path)
+        result_mask = torch.cat((result_mask, final_mask), dim=0)
+
+    # # save left points
+    # result_mask = torch.unique(result_mask)
+    # length = xyz.shape[0]
+    # inverse_indices = torch.arange(length)
+    # inverse_mask = ~torch.isin(inverse_indices, result_mask)
+    # inverse_indices = inverse_indices[inverse_mask]
+
+    # save_others_path = os.path.join(scene.model_path, 'point_cloud/iteration_30000/point_cloud_seg_others.ply')
+    # save_gs(gaussians, inverse_indices, save_others_path)
+
+    #####show result 
+    # other_gaussians = GaussianModel(dataset.sh_degree)
+    # other_gaussians.load_ply(save_others_path)
+    # bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+    # background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+
+    # other_save_path = os.path.join(scene.model_path,'train/ours_others')
+    # if not os.path.exists(other_save_path):
+    #     os.mkdir(other_save_path)
+
+    # for idx in range(len(cameras)):
+    #     image_name = cameras[idx].image_name
+    #     view = cameras[idx]
+
+    #     render_pkg = render(view, other_gaussians, pipeline, background)
+    #     # get sam output mask
+    #     render_image = render_pkg["render"].permute(1, 2, 0).detach().cpu().numpy()
+    #     render_image = (255 * np.clip(render_image, 0, 1)).astype(np.uint8)
+    #     render_image = cv2.cvtColor(render_image, cv2.COLOR_RGB2BGR)
+    #     cv2.imwrite(os.path.join(other_save_path, '{}.jpg'.format(image_name)), render_image)

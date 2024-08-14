@@ -28,6 +28,7 @@ from sklearn.decomposition import PCA
 from scipy.spatial import ConvexHull, Delaunay
 from render import feature_to_rgb, visualize_obj, obj2mask_binary
 import shutil
+from fine_seg import ensemble,mask_inverse
 
 def points_inside_convex_hull(point_cloud, mask, remove_outliers=True, outlier_factor=1.0):
     """
@@ -69,12 +70,46 @@ def points_inside_convex_hull(point_cloud, mask, remove_outliers=True, outlier_f
 
     return inside_hull_tensor_mask
 
-def removal_setup(opt, model_path, iteration, views, gaussians, pipeline, background, classifier, selected_obj_ids, cameras_extent, removal_thresh):
+def seg_with_mask(mask_dir,cameras,xyz):
+    filenames = os.listdir(mask_dir)
+    file_extension = os.path.splitext(filenames[0])[1].lower()
+    multiview_masks = []
+    # control the size according 100
+    camera_size = len(cameras)
+    skip_iteration = int(camera_size/100)
+    for i,view in enumerate(cameras):
+        if skip_iteration>1 and i % skip_iteration!= 0:
+            continue
+        image_name = view.image_name+file_extension
+        img_path = os.path.join(mask_dir, image_name)
+        img = Image.open(img_path)
+        mask_array= np.asarray(img,dtype=np.uint8)
+        mask_array = np.where(mask_array>127,255,0).astype(np.uint8)
+
+        if len(mask_array.shape) != 2:
+            mask_array = torch.from_numpy(mask_array).squeeze(-1).to("cuda")
+        else:
+            mask_array = torch.from_numpy(mask_array).to("cuda")
+
+        mask_array = (mask_array/255).long()
+        point_mask, indices_mask = mask_inverse(xyz, view, mask_array)
+
+        multiview_masks.append(point_mask.unsqueeze(-1))
+        del mask_array
+
+    _, final_mask = ensemble(multiview_masks,threshold=0.2) #0.1
+    return final_mask
+
+def removal_setup(opt, model_path, iteration, views, gaussians, pipeline, background, classifier, selected_obj_ids, cameras_extent, removal_thresh,source_path):
     selected_obj_ids = torch.tensor(selected_obj_ids).cuda()
     all_masks=[]
+    seg_cloud_path = os.path.join(model_path, "point_cloud_seg") # all segmented objects, using mask to generate later
     for selected_id in selected_obj_ids:
+        mask_path = os.path.join(source_path,"inpaint_object_mask_255",str(selected_id.item()))
         selected_id = selected_id.unsqueeze(0)
         with torch.no_grad():
+            # using fine seg
+
             logits3d = classifier(gaussians._objects_dc.permute(2,0,1))
             prob_obj3d = torch.softmax(logits3d,dim=0)
             mask = prob_obj3d[selected_id, :, :] > removal_thresh            
@@ -82,8 +117,12 @@ def removal_setup(opt, model_path, iteration, views, gaussians, pipeline, backgr
 
             mask3d_convex = points_inside_convex_hull(gaussians._xyz.detach(),mask3d,outlier_factor=1.0)
             mask3d = torch.logical_or(mask3d,mask3d_convex)
-
+            # print(mask3d,mask3d.shape)
+            # print(fine_seg_mask,fine_seg_mask.shape)
+            fine_seg_mask = seg_with_mask(mask_path,views,gaussians.get_xyz)
+            mask3d[[i for i in range(len(mask3d)) if i not in fine_seg_mask]] = False
             mask3d = mask3d.float()[:,None,None]
+            gaussians.save_selected_ply(os.path.join(seg_cloud_path, f"point_seg{str(selected_id.item())}.ply"), mask3d)
             all_masks.append(mask3d)
             # print("mask3d:",mask3d,mask3d.shape)
     all_masks_tensor = torch.stack(all_masks, dim=0)
@@ -93,9 +132,8 @@ def removal_setup(opt, model_path, iteration, views, gaussians, pipeline, backgr
     # print("final mask:",final_mask3d,final_mask3d.shape)
 
     point_cloud_path = os.path.join(model_path, "point_cloud_object_removal/iteration_{}".format(iteration))
-    seg_cloud_path = os.path.join(model_path, "point_cloud_seg") # all segmented objects, using mask to generate later
     # save segmented gaussians
-    gaussians.save_selected_ply(os.path.join(seg_cloud_path, "point_cloud.ply"), final_mask3d)
+    gaussians.save_selected_ply(os.path.join(seg_cloud_path, "point_cloud.ply"), final_mask3d) # this is actually not necessary
     
     # fix some gaussians
     gaussians.removal_setup(opt,final_mask3d)
@@ -204,7 +242,7 @@ def move_to_data(model_path, name, iteration, data_path):
     
     for name in in_names:
         if(os.path.exists(os.path.join(out_dir,name))):
-            shutil.rmtree(os.path.join(out_dir,name))
+            os.remove(os.path.join(out_dir,name))
         shutil.move(os.path.join(source_dir,name),out_dir)
 
     # for whole masks
@@ -229,20 +267,23 @@ def removal(dataset : ModelParams, iteration : int, pipeline : PipelineParams, s
     bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
+    save_mask_binary(dataset.model_path,"train",'_object_removal/iteration_'+str(scene.loaded_iter), scene.getTrainCameras(), select_obj_id) # no need to save whole masks
     # 2. remove selected object
-    gaussians = removal_setup(opt, dataset.model_path, scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, classifier, select_obj_id, scene.cameras_extent, removal_thresh)
+    for i in select_obj_id:
+        save_mask_binary(dataset.model_path,"train",'_object_removal/iteration_'+str(scene.loaded_iter), scene.getTrainCameras(), [i], str(i))
+
+    move_to_data(dataset.model_path,"train",'_object_removal/iteration_'+str(scene.loaded_iter),dataset.source_path) #move mask to data dir
+
+    gaussians = removal_setup(opt, dataset.model_path, scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, classifier, select_obj_id, scene.cameras_extent, removal_thresh,dataset.source_path)
 
     # 3. render new result
     scene = Scene(dataset, gaussians, load_iteration='_object_removal/iteration_'+str(scene.loaded_iter), shuffle=False)
     # additional: save removed objects
     # this is used for later inpainting
-    save_mask_binary(dataset.model_path,"train",scene.loaded_iter, scene.getTrainCameras(), select_obj_id) # no need to save whole masks
 
     # this is used for other modification
-    for i in select_obj_id:
-        save_mask_binary(dataset.model_path,"train",scene.loaded_iter, scene.getTrainCameras(), [i], str(i))
+    
 
-    move_to_data(dataset.model_path,"train",scene.loaded_iter,dataset.source_path) #move mask to data dir
     with torch.no_grad():
         if not skip_train:
              render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, classifier)

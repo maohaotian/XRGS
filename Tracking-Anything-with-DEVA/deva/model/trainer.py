@@ -234,7 +234,7 @@ class Trainer:
     def load_checkpoint(self, path):
         # This method loads everything and should be used to resume training
         map_location = 'cuda:%d' % self.local_rank
-        checkpoint = torch.load(path, map_location={'cuda:1': map_location})
+        checkpoint = torch.load(path, map_location={'cuda': map_location})
 
         it = checkpoint['it']
         network = checkpoint['network']
@@ -257,7 +257,7 @@ class Trainer:
     def load_network(self, path):
         # This method loads only the network weight and should be used to load a pretrained model
         map_location = 'cuda:%d' % self.local_rank
-        src_dict = torch.load(path, map_location={'cuda:1': map_location})
+        src_dict = torch.load(path, map_location={'cuda': map_location})
 
         self.load_network_in_memory(src_dict)
         print(f'Network weight loaded from {path}')

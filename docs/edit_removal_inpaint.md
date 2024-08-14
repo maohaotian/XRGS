@@ -48,15 +48,15 @@ Unseen region mask is the empty region left after removing the object, and we ca
 
 cd Tracking-Anything-with-DEVA/
 
-img_path=../output/mipnerf360/kitchen/train/ours_object_removal/iteration_30000/renders
-mask_path=./output_2d_inpaint_mask/mipnerf360/kitchen
-lama_path=../lama/LaMa_test_images/mipnerf360/kitchen
+img_path=../output/teatime/train/ours_object_removal/iteration_30000/renders
+mask_path=./output_2d_inpaint_mask/teatime
+lama_path=../lama/LaMa_test_images/teatime
 
 python demo/demo_with_text.py   --chunk_size 4    --img_path $img_path  --amp \
   --temporal_setting semionline --size 480   --output $mask_path  \
-  --prompt "black blurry hole"
+  --prompt "black blurry hole" --max_missed_detection_count 50 --DINO_THRESHOLD 0.35
 
-python prepare_lama_input.py $img_path $mask_path $lama_path
+python prepare_lama_input.py $img_path $mask_path $lama_path ../data/teatime/inpaint_object_mask_255
 cd ..
 ```
 
