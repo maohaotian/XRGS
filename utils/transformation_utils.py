@@ -92,7 +92,6 @@ def apply_rotations(position_tensor, rotation_matrices):
         position_tensor = apply_rotation(position_tensor, rotation_matrices[i])
     return position_tensor
 
-
 def apply_cov_rotations(upper_cov_tensor, rotation_matrices):
     cov_tensor = get_mat_from_upper(upper_cov_tensor)
     for i in range(len(rotation_matrices)):

@@ -3,6 +3,7 @@ import os
 import numpy as np
 import taichi as ti
 import mcubes
+import csv
 
 # 1. densify grids
 # 2. identify grids whose density is larger than some threshold
@@ -188,14 +189,19 @@ def internal_filling(
     new_particles: ti.template(),
     start_idx: int,
     max_particles_per_cell: int,
+    water_grid_indices: ti.template(),
+    water_grid_count: ti.template(),
     exclude_dir: int,
     ray_cast_dir: int,
     threshold: float,
 ) -> int:
     new_start_idx = start_idx
+    count = 0
     for i, j, k in grid:
-        if grid[i, j, k] == 0:
-            collision_hit = True
+        # if grid[i, j, k] == 0:
+        if grid[i, j, k] < max_particles_per_cell:
+            five_collision_hit = True
+            six_collision_hit = True
             for dir_type in ti.static(range(6)):
                 if dir_type != exclude_dir:
                     hit_test = collision_search(
@@ -206,9 +212,27 @@ def internal_filling(
                         size=grid.shape[0],
                         threshold=threshold,
                     )
-                    collision_hit = collision_hit and hit_test
+                    five_collision_hit = five_collision_hit and hit_test
+                    six_collision_hit = six_collision_hit and hit_test
+                else :
+                    hit_test = collision_search(
+                        grid=grid,
+                        grid_density=grid_density,
+                        index=ti.Vector([i, j, k]),
+                        dir_type=dir_type,
+                        size=grid.shape[0],
+                        threshold=threshold,
+                    )
+                    six_collision_hit = six_collision_hit and hit_test
 
-            if collision_hit:
+
+            # 液面上方杯子内部
+            if not six_collision_hit and five_collision_hit:
+                pass
+
+
+            # 液面内部
+            if six_collision_hit and five_collision_hit:
                 hit_times = collision_times(
                     grid=grid,
                     grid_density=grid_density,
@@ -228,7 +252,15 @@ def internal_filling(
                         dk = ti.random()
                         new_particles[index] = (
                             ti.Vector([i + di, j + dj, k + dk]) * grid_dx
-                        )
+                        )        
+                    water_grid_indices[count] = ti.Vector([i, j, k])
+                    ti.atomic_add(count, 1)
+
+            # 杯子外面
+            if not six_collision_hit and not five_collision_hit:
+                pass
+
+    water_grid_count[0] = count
 
     return new_start_idx
 
@@ -268,6 +300,34 @@ def assign_particle_to_grid(
         k = ti.floor(p[2] / grid_dx, dtype=int)
         ti.atomic_add(grid[i, j, k], 1)
 
+@ti.kernel
+def create_particle_mask(
+    water_grid_indices: ti.template(),  # 记录了需要提取的grid对应index
+    pos: ti.template(),                      # 粒子的位置信息
+    grid_dx: float,                           # 网格单元的大小
+    mask: ti.template(),                       # 输出的mask数组
+    water_grid_count: ti.template()       # 记录了需要提取的grid的数量
+):
+    for idx in range(water_grid_count[0]):
+        grid_index = water_grid_indices[idx]
+        for pi in range(pos.shape[0]):
+            pos_grid_index = ti.Vector([
+                ti.floor(pos[pi][0] / grid_dx, dtype=int),
+                ti.floor(pos[pi][1] / grid_dx, dtype=int),
+                ti.floor(pos[pi][2] / grid_dx, dtype=int)
+            ])
+            
+            if (pos_grid_index[0] == grid_index[0] and
+                pos_grid_index[1] == grid_index[1] and
+                pos_grid_index[2] == grid_index[2]):
+                mask[pi] = 1  # 标记为1，表示这个粒子在需要提取的网格中
+
+@ti.kernel
+def copy_effective_indices(src: ti.template(), dst: ti.template(), count: int):
+    for i in range(count):
+        dst[i] = src[i]
+
+
 
 def get_particle_volume(pos, grid_n: int, grid_dx: float, unifrom: bool = False):
     ti_pos = ti.Vector.field(n=3, dtype=float, shape=pos.shape[0])
@@ -297,8 +357,8 @@ def fill_particles(
     density_thres=2.0,
     search_thres=1.0,
     max_particles_per_cell=1,
-    search_exclude_dir=5,
-    ray_cast_dir=4,
+    search_exclude_dir=4,
+    ray_cast_dir=5,
     boundary: list = None,
     smooth: bool = False,
 ):
@@ -322,50 +382,6 @@ def fill_particles(
     print("max_y:", max_y)
     print("min_z:", min_z)
     print("max_z:", max_z)
-
-
-    # def quaternion_to_rotation_matrix(q):
-    #     w, x, y, z = q
-    #     R = np.array([
-    #         [1 - 2*y**2 - 2*z**2, 2*x*y - 2*w*z, 2*x*z + 2*w*y],
-    #         [2*x*y + 2*w*z, 1 - 2*x**2 - 2*z**2, 2*y*z - 2*w*x],
-    #         [2*x*z - 2*w*y, 2*y*z + 2*w*x, 1 - 2*x**2 - 2*y**2]
-    #     ])
-    #     return R
-
-    # def rotation_matrix_inverse(R):
-    #     return R.T  # 旋转矩阵的逆就是其转置
-
-    # # 假设你的旋转四元数是 q = [w, x, y, z]
-    # q = [0.079, -0.292, 0.886, -0.351]  # 例如，绕x轴旋转45度的四元数
-
-    # # 将四元数转换为旋转矩阵
-    # R = quaternion_to_rotation_matrix(q)
-
-    # # 将旋转矩阵应用到点集上
-    # pos_np = pos_clone.detach().cpu().numpy()
-    # pos_rotated = np.dot(R, pos_np.T).T
-
-    # min_x = np.min(pos_rotated[:, 0])
-    # max_x = np.max(pos_rotated[:, 0])
-    # min_y = np.min(pos_rotated[:, 1])
-    # max_y = np.max(pos_rotated[:, 1])
-    # min_z = np.min(pos_rotated[:, 2])
-    # max_z = np.max(pos_rotated[:, 2])
-
-    # print("Rotate!")
-    # print("min_x:", min_x)
-    # print("max_x:", max_x)
-    # print("min_y:", min_y)
-    # print("max_y:", max_y)
-    # print("min_z:", min_z)
-    # print("max_z:", max_z)
-
-    # pos = nn.Parameter(torch.tensor(pos_rotated, dtype=torch.float, device="cuda").requires_grad_(True))
-    # pos_clone = pos.clone()
-
-    print(f"pos shape: {pos.shape}")
-
 
     if boundary is not None:
         assert len(boundary) == 6
@@ -414,15 +430,15 @@ def fill_particles(
     print(f"grid_dx: {grid_dx}")
     print(f"density_thres: {density_thres}")
     print(f"max_particles_per_cell: {max_particles_per_cell}")
-    fill_num = fill_dense_grids(
-        grid,
-        grid_density,
-        grid_dx,
-        density_thres,
-        particles,
-        0,
-        max_particles_per_cell,
-    )
+    # fill_num = fill_dense_grids(
+    #     grid,
+    #     grid_density,
+    #     grid_dx,
+    #     density_thres,
+    #     particles,
+    #     0,
+    #     max_particles_per_cell,
+    # )
 
     # smooth density_field
     if smooth:
@@ -434,6 +450,8 @@ def fill_particles(
         print("smooth finished")
 
     # fill internal grids
+    water_grid_indices = ti.Vector.field(n=3, dtype=int, shape=grid_n ** 3)
+    water_grid_count = ti.field(dtype=int, shape=1)
     fill_num = internal_filling(
         grid,
         grid_density,
@@ -441,27 +459,52 @@ def fill_particles(
         particles,
         fill_num,
         max_particles_per_cell,
+        water_grid_indices,
+        water_grid_count,
         exclude_dir=search_exclude_dir,  # 0: x, 1: -x, 2: y, 3: -y, 4: z, 5: -z direction
         ray_cast_dir=ray_cast_dir,  # 0: x, 1: -x, 2: y, 3: -y, 4: z, 5: -z direction
         threshold=search_thres,
     )
     print("after internal grids: ", fill_num)
-
+    
     # put new particles together with original particles
     particles_tensor = particles.to_torch()[:fill_num].cuda()
     if boundary is not None:
         particles_tensor = particles_tensor + new_origin
     particles_tensor = torch.cat([pos_clone, particles_tensor], dim=0)
 
+    # create mask for particles
+    particles_all = ti.Vector.field(n=3, dtype=float, shape=particles_tensor.shape[0])
+    particles_all.from_torch(particles_tensor.reshape(-1, 3))
+    mask = ti.field(dtype=int, shape=particles_tensor.shape[0])
+    create_particle_mask(water_grid_indices, particles_all, grid_dx, mask, water_grid_count)
+    water_mask = mask.to_torch().cuda()
 
-    # particles_np = particles_tensor.detach().cpu().numpy()
-    # # 计算旋转矩阵的逆
-    # R_inverse = rotation_matrix_inverse(R)
-    # # 将旋转后的点集变换回原始位置
-    # pos_original = np.dot(R_inverse, particles_np.T).T
-    # particles_tensor = nn.Parameter(torch.tensor(pos_original, dtype=torch.float, device="cuda").requires_grad_(True))
 
-    return particles_tensor
+    #### debug ####
+    print(f"particles all count: {particles_all.shape[0]}")
+    print(f"water grid indices count: {water_grid_count[0]}")
+    mask_count = 0
+    for i in range(water_mask.shape[0]):
+        if water_mask[i] == 1:
+            mask_count += 1
+    print(f"Number of total indices grid count: {water_mask.shape[0]}")
+    print(f"Number of water grid count: {mask_count}")
+
+    # 保存 particles_all 为 CSV 文件
+    particles_all_np = particles_all.to_numpy()
+    np.savetxt("particles_all.csv", particles_all_np.reshape(-1, 3), delimiter=",", header="x,y,z")
+
+    # 保存 water_grid_indices 为 CSV 文件
+    water_grid_indices_np = water_grid_indices.to_numpy()
+    water_grid_indices_np = water_grid_indices_np[:water_grid_count[0]]
+    np.savetxt("water_grid_indices.csv", water_grid_indices_np.reshape(-1, 3), delimiter=",", header="i,j,k")
+
+    # 保存 mask 为 CSV 文件
+    mask_np = mask.to_numpy()
+    np.savetxt("mask.csv", mask_np, delimiter=",", header="mask")
+
+    return particles_tensor, water_mask
 
 
 @ti.kernel
@@ -493,6 +536,13 @@ def get_attr_from_closest(
         ti_new_cov[pi] = ti_cov[min_idx]
         ti_new_scale[pi] = ti_scale[min_idx]
         ti_new_rotation[pi] = ti_rotation[min_idx]
+    
+    # # test
+    # for index in range(ti_new_shs.shape[0]):
+    #     ti_new_shs[index] = ti_shs[0]
+
+    # for index in range(ti_shs.shape[0]):
+    #     ti_shs[index] = ti_shs[1]
 
 
 def init_filled_particles(pos, shs, cov, opacity, new_pos, scaling, rotation):

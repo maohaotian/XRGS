@@ -201,9 +201,10 @@ if __name__ == "__main__":
     device = "cuda:0"
     filling_params = preprocessing_params["particle_filling"]
 
+    water_mask = None
     if filling_params is not None:
         print("Filling internal particles...")
-        mpm_init_pos = fill_particles(
+        mpm_init_pos, water_mask = fill_particles(
             pos=transformed_pos,
             opacity=init_opacity,
             cov=init_cov,
@@ -217,13 +218,18 @@ if __name__ == "__main__":
             ray_cast_dir=filling_params["ray_cast_direction"],
             boundary=filling_params["boundary"],
             smooth=filling_params["smooth"],
-        ).to(device=device)
+        )
+        mpm_init_pos = mpm_init_pos.to(device=device)
 
         particle_position_tensor_to_ply(mpm_init_pos, args.output_path + "filled_particles.ply")
         gaussians.save_filled_ply_by_pos(args.output_path + "filled_by_position.ply",mpm_init_pos);
 
     else:
         mpm_init_pos = transformed_pos.to(device=device)
+
+    if gs_num == mpm_init_pos.shape[0]:
+        print("Warning: None of particles are filled, please change the filling parameters.")
+        sys.exit(1)
 
     xyz, features_dc, features_rest, scaling, rotation, opacity, normals = gaussians.get_attributes()
     scaling = scaling[initial_mask, :]
@@ -245,7 +251,15 @@ if __name__ == "__main__":
         shs = init_shs
         opacity = init_opacity
 
+    mpm_init_pos = undo_all_transforms(
+        mpm_init_pos, rotation_matrices, scale_origin, original_mean_pos
+    )
+    gaussians.save_filled_ply_by_attributes(args.output_path + "filled_by_attributes_water.ply",
+        mpm_init_pos, shs, opacity, mpm_init_cov ,scale, rotation ,water_mask)
+
+    for i in range(water_mask.shape[0]):
+        water_mask[i] = 1
     gaussians.save_filled_ply_by_attributes(args.output_path + "filled_by_attributes.ply",
-        mpm_init_pos, shs, opacity, mpm_init_cov ,scale, rotation)
+        mpm_init_pos, shs, opacity, mpm_init_cov ,scale, rotation ,water_mask)
 
   

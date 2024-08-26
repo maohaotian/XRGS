@@ -741,7 +741,7 @@ class GaussianModel:
             filled_opacities = self.fill_array(opacities, particle_num,filled_opacities_value)
             filled_scale = self.fill_array(scale, particle_num,filled_scale_value)
             filled_rotation = self.fill_array(rotation, particle_num,filled_rotation_value)
-            filled_normals = self.fill_array(normals, particle_num,filled_normal_value)
+            filled_normals = normals
             filled_xyz = xyz
         else:
             filled_f_dc = f_dc
@@ -749,7 +749,7 @@ class GaussianModel:
             filled_opacities = opacities
             filled_scale = scale
             filled_rotation = rotation
-            filled_normals = normals
+            filled_normals = self.fill_array(normals, particle_num,filled_normal_value)
             filled_xyz = self.fill_array(xyz, particle_num,filled_xyz_value)
 
 
@@ -772,33 +772,33 @@ class GaussianModel:
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)       
 
-    #填充的ply文件信息即为函数参数
-    def save_filled_ply_by_attributes(self, path, pos, shs, opacity,cov,scale, rotation):
+    def save_filled_ply_by_attributes(self, path, pos, shs, opacity, cov, scale, rotation, mask):
         mkdir_p(os.path.dirname(path))
 
-        # print("Save filled ply by attributes")
-        # print(f"pos shape : {pos.shape}")
-        # print(f"shs shape : {shs.shape}")
-        # print(f"opacity shape : {opacity.shape}")
-        # print(f"cov shape : {cov.shape}")
-        # print(f"scale shape : {scale.shape}")
-        # print(f"rotation shape : {rotation.shape}")
-        
+        # 使用mask过滤数组
+        pos_filtered = pos[mask > 0]
+        shs_filtered = shs[mask > 0]
+        opacity_filtered = opacity[mask > 0]
+        cov_filtered = cov[mask > 0]
+        scale_filtered = scale[mask > 0]
+        rotation_filtered = rotation[mask > 0]
 
-        xyz = pos.detach().cpu().numpy()
+        # 转换为numpy数组
+        xyz = pos_filtered.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
-        f_dc_torch = shs[:,:1,:]
-        f_rest_torch = shs[:,1:,:]
+        f_dc_torch = shs_filtered[:,:1,:]
+        f_rest_torch = shs_filtered[:,1:,:]
         f_dc = f_dc_torch.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = f_rest_torch.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-        opacities = opacity.detach().cpu().numpy()
-        scale = scale.detach().cpu().numpy()
-        rotation = rotation.detach().cpu().numpy()
+        opacities = opacity_filtered.detach().cpu().numpy()
+        scale = scale_filtered.detach().cpu().numpy()
+        rotation = rotation_filtered.detach().cpu().numpy()
 
+        # 创建PlyData
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes_origin()]
-
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
         attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
-        PlyData([el]).write(path)       
+        PlyData([el]).write(path)
+  
