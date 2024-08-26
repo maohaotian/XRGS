@@ -97,39 +97,52 @@ def seg_with_mask(mask_dir,cameras,xyz):
         multiview_masks.append(point_mask.unsqueeze(-1))
         del mask_array
 
-    _, final_mask = ensemble(multiview_masks,threshold=0.2) #0.1
+    _, final_mask = ensemble(multiview_masks,threshold=0.5) #0.1
     return final_mask
 
-def removal_setup(opt, model_path, iteration, views, gaussians, pipeline, background, classifier, selected_obj_ids, cameras_extent, removal_thresh,source_path):
+def double_cut_seg(classifier,gaussians,selected_id,removal_thresh,mask_path,views):
+    with torch.no_grad():
+        # using fine seg
+        logits3d = classifier(gaussians._objects_dc.permute(2,0,1))
+        prob_obj3d = torch.softmax(logits3d,dim=0)
+        mask = prob_obj3d[selected_id, :, :] > removal_thresh            
+        mask3d = mask.any(dim=0).squeeze()
+
+        mask3d_convex = points_inside_convex_hull(gaussians._xyz.detach(),mask3d,outlier_factor=1.0)
+        mask3d = torch.logical_or(mask3d,mask3d_convex)
+        # print(mask3d,mask3d.shape)
+        # print(fine_seg_mask,fine_seg_mask.shape)
+        fine_seg_mask = seg_with_mask(mask_path,views,gaussians.get_xyz)
+        mask3d[[i for i in range(len(mask3d)) if i not in fine_seg_mask]] = False
+        mask3d = mask3d.float()[:,None,None]
+        return mask3d
+
+def removal_setup(opt, model_path, iteration, views, gaussians, pipeline, background, classifier, selected_obj_ids, cameras_extent, removal_thresh,source_path,support_faces):
     selected_obj_ids = torch.tensor(selected_obj_ids).cuda()
+    support_faces = torch.tensor(support_faces).cuda()
     all_masks=[]
     seg_cloud_path = os.path.join(model_path, "point_cloud_seg") # all segmented objects, using mask to generate later
+
+    for selected_id in support_faces:
+        mask_path = os.path.join(source_path,"inpaint_object_mask_255",str(selected_id.item()))
+        selected_id = selected_id.unsqueeze(0)
+        mask3d = double_cut_seg(classifier,gaussians,selected_id,removal_thresh,mask_path,views)
+        gaussians.save_selected_ply(os.path.join(seg_cloud_path, f"point_seg{str(selected_id.item())}.ply"), mask3d) #only need ply for support
+
+
     for selected_id in selected_obj_ids:
         mask_path = os.path.join(source_path,"inpaint_object_mask_255",str(selected_id.item()))
         selected_id = selected_id.unsqueeze(0)
-        with torch.no_grad():
-            # using fine seg
-
-            logits3d = classifier(gaussians._objects_dc.permute(2,0,1))
-            prob_obj3d = torch.softmax(logits3d,dim=0)
-            mask = prob_obj3d[selected_id, :, :] > removal_thresh            
-            mask3d = mask.any(dim=0).squeeze()
-
-            mask3d_convex = points_inside_convex_hull(gaussians._xyz.detach(),mask3d,outlier_factor=1.0)
-            mask3d = torch.logical_or(mask3d,mask3d_convex)
-            # print(mask3d,mask3d.shape)
-            # print(fine_seg_mask,fine_seg_mask.shape)
-            fine_seg_mask = seg_with_mask(mask_path,views,gaussians.get_xyz)
-            mask3d[[i for i in range(len(mask3d)) if i not in fine_seg_mask]] = False
-            mask3d = mask3d.float()[:,None,None]
-            gaussians.save_selected_ply(os.path.join(seg_cloud_path, f"point_seg{str(selected_id.item())}.ply"), mask3d)
-            all_masks.append(mask3d)
+        mask3d = double_cut_seg(classifier,gaussians,selected_id,removal_thresh,mask_path,views)
+        gaussians.save_selected_ply(os.path.join(seg_cloud_path, f"point_seg{str(selected_id.item())}.ply"), mask3d)
+        all_masks.append(mask3d)
             # print("mask3d:",mask3d,mask3d.shape)
     all_masks_tensor = torch.stack(all_masks, dim=0)
     # all_masks = torch.cat(all_masks, dim=0)
     # print("allmask:",all_masks_tensor,all_masks_tensor.shape)
     final_mask3d = all_masks_tensor.any(dim=0).float()
     # print("final mask:",final_mask3d,final_mask3d.shape)
+    torch.save(final_mask3d,os.path.join(model_path,"final_mask3d.pth")) #
 
     point_cloud_path = os.path.join(model_path, "point_cloud_object_removal/iteration_{}".format(iteration))
     # save segmented gaussians
@@ -255,7 +268,7 @@ def move_to_data(model_path, name, iteration, data_path):
     
     
 
-def removal(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, opt : OptimizationParams, select_obj_id : int, removal_thresh : float):
+def removal(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, opt : OptimizationParams, select_obj_id : int, removal_thresh : float, support_faces):
     # 1. load gaussian checkpoint
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
@@ -269,12 +282,12 @@ def removal(dataset : ModelParams, iteration : int, pipeline : PipelineParams, s
 
     save_mask_binary(dataset.model_path,"train",'_object_removal/iteration_'+str(scene.loaded_iter), scene.getTrainCameras(), select_obj_id) # no need to save whole masks
     # 2. remove selected object
-    for i in select_obj_id:
+    for i in select_obj_id+support_faces:
         save_mask_binary(dataset.model_path,"train",'_object_removal/iteration_'+str(scene.loaded_iter), scene.getTrainCameras(), [i], str(i))
 
     move_to_data(dataset.model_path,"train",'_object_removal/iteration_'+str(scene.loaded_iter),dataset.source_path) #move mask to data dir
 
-    gaussians = removal_setup(opt, dataset.model_path, scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, classifier, select_obj_id, scene.cameras_extent, removal_thresh,dataset.source_path)
+    gaussians = removal_setup(opt, dataset.model_path, scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background, classifier, select_obj_id, scene.cameras_extent, removal_thresh,dataset.source_path,support_faces)
 
     # 3. render new result
     scene = Scene(dataset, gaussians, load_iteration='_object_removal/iteration_'+str(scene.loaded_iter), shuffle=False)
@@ -321,10 +334,11 @@ if __name__ == "__main__":
     args.num_classes = config.get("num_classes", 200)
     args.removal_thresh = config.get("removal_thresh", 0.3)
     args.select_obj_id = config.get("select_obj_id", [34])
+    args.support_faces = config.get("support_faces",[])
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    removal(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, opt.extract(args), args.select_obj_id, args.removal_thresh)
+    removal(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, opt.extract(args), args.select_obj_id, args.removal_thresh,args.support_faces)
 
 

@@ -52,21 +52,22 @@ def divide_into_patches(image, K):
     return patches.permute(0, 4, 1, 2, 3)
 
 def finetune_inpaint(opt, model_path, iteration, views, gaussians, pipeline, background, classifier, selected_obj_ids, cameras_extent, removal_thresh, finetune_iteration,density_iteration,mask_path):
-    all_masks=[]
-    for selected_id in selected_obj_ids: # this is for delete
-    # get 3d gaussians idx corresponding to select obj id
-        with torch.no_grad():
-            logits3d = classifier(gaussians._objects_dc.permute(2,0,1))
-            prob_obj3d = torch.softmax(logits3d,dim=0)
-            mask = prob_obj3d[[selected_id], :, :] > removal_thresh
-            mask3d = mask.any(dim=0).squeeze()
+    # all_masks=[]
+    # for selected_id in selected_obj_ids: # this is for delete
+    # # get 3d gaussians idx corresponding to select obj id
+    #     with torch.no_grad():
+    #         logits3d = classifier(gaussians._objects_dc.permute(2,0,1))
+    #         prob_obj3d = torch.softmax(logits3d,dim=0)
+    #         mask = prob_obj3d[[selected_id], :, :] > removal_thresh
+    #         mask3d = mask.any(dim=0).squeeze()
 
-            mask3d_convex = points_inside_convex_hull(gaussians._xyz.detach(),mask3d,outlier_factor=1.0)
-            mask3d = torch.logical_or(mask3d,mask3d_convex)
-            mask3d = mask3d.float()[:,None,None]
-            all_masks.append(mask3d)
-    all_masks_tensor = torch.stack(all_masks, dim=0)
-    final_mask3d = all_masks_tensor.any(dim=0).float()
+    #         mask3d_convex = points_inside_convex_hull(gaussians._xyz.detach(),mask3d,outlier_factor=1.0)
+    #         mask3d = torch.logical_or(mask3d,mask3d_convex)
+    #         mask3d = mask3d.float()[:,None,None]
+    #         all_masks.append(mask3d)
+    # all_masks_tensor = torch.stack(all_masks, dim=0)
+    # final_mask3d = all_masks_tensor.any(dim=0).float()
+    final_mask3d = torch.load(os.path.join(model_path,"final_mask3d.pth"))
 
     # fix some gaussians
     gaussians.inpaint_setup(opt,final_mask3d)
