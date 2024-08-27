@@ -253,15 +253,16 @@ def internal_filling(
                         new_particles[index] = (
                             ti.Vector([i + di, j + dj, k + dk]) * grid_dx
                         )        
-                    water_grid_indices[count] = ti.Vector([i, j, k])
-                    ti.atomic_add(count, 1)
+                    # water_grid_indices[count] = ti.Vector([i, j, k])
+                    water_grid_indices[i*grid.shape[0]*grid.shape[0]+j*grid.shape[0]+k] = ti.Vector([i, j, k])
+                    # ti.atomic_add(count, 1)
+                    count+=1
 
             # 杯子外面
             if not six_collision_hit and not five_collision_hit:
                 pass
-
+    print("count:",count)
     water_grid_count[0] = count
-
     return new_start_idx
 
 
@@ -308,7 +309,7 @@ def create_particle_mask(
     mask: ti.template(),                       # 输出的mask数组
     water_grid_count: ti.template()       # 记录了需要提取的grid的数量
 ):
-    for idx in range(water_grid_count[0]):
+    for idx in range(water_grid_indices.shape[0]):
         grid_index = water_grid_indices[idx]
         for pi in range(pos.shape[0]):
             pos_grid_index = ti.Vector([
@@ -465,7 +466,7 @@ def fill_particles(
         ray_cast_dir=ray_cast_dir,  # 0: x, 1: -x, 2: y, 3: -y, 4: z, 5: -z direction
         threshold=search_thres,
     )
-    print("after internal grids: ", fill_num)
+    print("after internal grids: ", fill_num)   
     
     # put new particles together with original particles
     particles_tensor = particles.to_torch()[:fill_num].cuda()
