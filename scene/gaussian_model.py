@@ -775,7 +775,6 @@ class GaussianModel:
     def save_filled_ply_by_attributes(self, path, pos, shs, opacity, cov, scale, rotation, mask):
         mkdir_p(os.path.dirname(path))
 
-        # 使用mask过滤数组
         pos_filtered = pos[mask > 0]
         shs_filtered = shs[mask > 0]
         opacity_filtered = opacity[mask > 0]

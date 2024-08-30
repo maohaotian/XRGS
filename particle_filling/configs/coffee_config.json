@@ -1,0 +1,25 @@
+{
+    "opacity_threshold": 0.1,
+    "rotation_degree": [
+        -118.813
+    ],
+    "rotation_axis": [
+        0
+    ],
+    "particle_filling": {
+        "n_grid": 70,
+        "density_threshold": 2.0,
+        "search_threshold": 2.0,
+        "search_exclude_direction": 5,
+        "ray_cast_direction": 4,
+        "max_particles_num": 2000000,
+        "max_partciels_per_cell": 1,
+        "smooth": true,
+        "water_grid_threshold":1.0,
+        "water_complete_factor":1.0,
+        "water_complete_offset":[0.0,0.0,12.0],
+        "water_complete_layer": 1,
+        "water_scale_factor":1.0,
+        "exposure": false
+    }
+}

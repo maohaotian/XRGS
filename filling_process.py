@@ -50,7 +50,7 @@ def particle_position_tensor_to_ply(position_tensor, filename):
         os.remove(filename)
     position = position_tensor.clone().detach().cpu().numpy()
     num_particles = (position).shape[0]
-    print(f'num_particles: {num_particles}')
+    # print(f'num_particles: {num_particles}')
     position = position.astype(np.float32)
     with open(filename, "wb") as f:  # write binary
         header = f"""ply
@@ -106,10 +106,7 @@ if __name__ == "__main__":
     print("Loading scene config...")
     (
         material_params,
-        bc_params,
-        time_params,
         preprocessing_params,
-        camera_params,
     ) = decode_param_json(args.config)
 
     # load gaussians
@@ -146,17 +143,17 @@ if __name__ == "__main__":
 
 
     # rorate and translate object
-    particle_position_tensor_to_ply(
-        init_pos,
-        args.output_path + "init_particles.ply",
-    )
+    # particle_position_tensor_to_ply(
+    #     init_pos,
+    #     args.output_path + "init_particles.ply",
+    # )
     rotation_matrices = generate_rotation_matrices(
         torch.tensor(preprocessing_params["rotation_degree"]),
         preprocessing_params["rotation_axis"],
     )
     rotated_pos = apply_rotations(init_pos, rotation_matrices)
 
-    particle_position_tensor_to_ply(rotated_pos, args.output_path + "rotated_particles.ply")
+    # particle_position_tensor_to_ply(rotated_pos, args.output_path + "rotated_particles.ply")
 
     # select a sim area and save params of unslected particles
     unselected_pos, unselected_cov, unselected_opacity, unselected_shs = (
@@ -191,10 +188,10 @@ if __name__ == "__main__":
     init_cov = scale_origin * scale_origin * init_cov
 
 
-    particle_position_tensor_to_ply(
-        transformed_pos,
-        args.output_path + "transformed_particles.ply",
-    )
+    # particle_position_tensor_to_ply(
+    #     transformed_pos,
+    #     args.output_path + "transformed_particles.ply",
+    # )
 
     # fill particles if needed
     gs_num = transformed_pos.shape[0]
@@ -202,30 +199,27 @@ if __name__ == "__main__":
     filling_params = preprocessing_params["particle_filling"]
 
     water_mask = None
-    if filling_params is not None:
-        print("Filling internal particles...")
-        mpm_init_pos, water_mask = fill_particles(
-            pos=transformed_pos,
-            opacity=init_opacity,
-            cov=init_cov,
-            grid_n=filling_params["n_grid"],
-            max_samples=filling_params["max_particles_num"],
-            grid_dx=material_params["grid_lim"] / filling_params["n_grid"],
-            density_thres=filling_params["density_threshold"],
-            search_thres=filling_params["search_threshold"],
-            max_particles_per_cell=filling_params["max_partciels_per_cell"],
-            search_exclude_dir=filling_params["search_exclude_direction"],
-            ray_cast_dir=filling_params["ray_cast_direction"],
-            boundary=filling_params["boundary"],
-            smooth=filling_params["smooth"],
-        )
-        mpm_init_pos = mpm_init_pos.to(device=device)
-
-        particle_position_tensor_to_ply(mpm_init_pos, args.output_path + "filled_particles.ply")
-        gaussians.save_filled_ply_by_pos(args.output_path + "filled_by_position.ply",mpm_init_pos);
-
-    else:
-        mpm_init_pos = transformed_pos.to(device=device)
+    mpm_init_pos, water_mask = fill_particles(
+        pos=transformed_pos,
+        opacity=init_opacity,
+        cov=init_cov,
+        grid_n=filling_params["n_grid"],
+        max_samples=filling_params["max_particles_num"],
+        grid_dx=material_params["grid_lim"] / filling_params["n_grid"],
+        density_thres=filling_params["density_threshold"],
+        search_thres=filling_params["search_threshold"],
+        max_particles_per_cell=filling_params["max_partciels_per_cell"],
+        search_exclude_dir=filling_params["search_exclude_direction"],
+        ray_cast_dir=filling_params["ray_cast_direction"],
+        boundary=filling_params["boundary"],
+        smooth=filling_params["smooth"],
+        water_grid_threshold = filling_params["water_grid_threshold"],
+        water_complete_factor = filling_params["water_complete_factor"],
+        water_complete_offset = filling_params["water_complete_offset"],
+        water_complete_layer = filling_params["water_complete_layer"],
+        exposure=filling_params["exposure"]
+    )
+    mpm_init_pos = mpm_init_pos.to(device=device)
 
     if gs_num == mpm_init_pos.shape[0]:
         print("Warning: None of particles are filled, please change the filling parameters.")
@@ -234,32 +228,58 @@ if __name__ == "__main__":
     xyz, features_dc, features_rest, scaling, rotation, opacity, normals = gaussians.get_attributes()
     scaling = scaling[initial_mask, :]
     rotation = rotation[initial_mask, :]
-    if filling_params is not None and filling_params["visualize"] == True:
-        shs, opacity, mpm_init_cov, scale, rotation = init_filled_particles(
-            mpm_init_pos[:gs_num],
-            init_shs,
-            init_cov,
-            init_opacity,
-            mpm_init_pos[gs_num:],
-            scaling,
-            rotation,
-        )
-        gs_num = mpm_init_pos.shape[0]
-    else:
-        mpm_init_cov = torch.zeros((mpm_init_pos.shape[0], 6), device=device)
-        mpm_init_cov[:gs_num] = init_cov
-        shs = init_shs
-        opacity = init_opacity
+    shs, opacity, mpm_init_cov, scale, rotation = init_filled_particles(
+         mpm_init_pos[:gs_num],
+        init_shs,
+        init_cov,
+        init_opacity,
+        mpm_init_pos[gs_num:],
+        scaling,
+        rotation,
+        water_mask
+    )
+    # gs_num = mpm_init_pos.shape[0]
 
     mpm_init_pos = undo_all_transforms(
         mpm_init_pos, rotation_matrices, scale_origin, original_mean_pos
     )
-    gaussians.save_filled_ply_by_attributes(args.output_path + "filled_by_attributes_water.ply",
-        mpm_init_pos, shs, opacity, mpm_init_cov ,scale, rotation ,water_mask)
 
-    for i in range(water_mask.shape[0]):
-        water_mask[i] = 1
-    gaussians.save_filled_ply_by_attributes(args.output_path + "filled_by_attributes.ply",
-        mpm_init_pos, shs, opacity, mpm_init_cov ,scale, rotation ,water_mask)
+    fill_particle_count = mpm_init_pos.shape[0]
+    # 存储填充后的液体粒子
+    water_scale = scale
+    scale_factor = filling_params["water_scale_factor"]
+    print("Water scale factor: ", scale_factor)
+    water_scale = water_scale * scale_factor
+    gaussians.save_filled_ply_by_attributes(args.output_path + "fill_water.ply",
+        mpm_init_pos, shs, opacity, mpm_init_cov ,water_scale, rotation ,water_mask)
 
-  
+    # 存储填充后的杯子粒子
+    fill_cup_mask = 1 - water_mask
+    gaussians.save_filled_ply_by_attributes(args.output_path + "fill_cup.ply",
+        mpm_init_pos, shs, opacity, mpm_init_cov ,scale, rotation ,fill_cup_mask)
+
+    # 存储原始杯子粒子
+    origin_cup_mask = fill_cup_mask.clone()
+    origin_cup_mask[gs_num:] = 0
+    gaussians.save_filled_ply_by_attributes(args.output_path + "origin_cup.ply",
+        mpm_init_pos, shs, opacity, mpm_init_cov ,scale, rotation ,origin_cup_mask)
+
+    # 存储原始杯子粒子和填充后的水粒子
+    fill_water_origin_cup_mask = torch.zeros_like(water_mask)
+    for i in range(fill_particle_count):
+        if water_mask[i] == 1 or origin_cup_mask[i] == 1:
+            fill_water_origin_cup_mask[i] = 1
+    fill_water_origin_cup_scale = scale.clone()
+    for i in range(fill_particle_count):
+        if water_mask[i] == 1:
+            fill_water_origin_cup_scale[i] *= scale_factor
+    gaussians.save_filled_ply_by_attributes(args.output_path + "fill_water_origin_cup.ply",
+        mpm_init_pos, shs, opacity, mpm_init_cov ,fill_water_origin_cup_scale, rotation ,fill_water_origin_cup_mask)
+
+    # 存储填充后的杯子粒子和填充后的水粒子
+    fill_water_fill_cup_mask = torch.zeros_like(water_mask)
+    for i in range(fill_particle_count):
+        fill_water_fill_cup_mask[i] = 1
+    fill_water_fill_cup_scale = fill_water_origin_cup_scale.clone()
+    gaussians.save_filled_ply_by_attributes(args.output_path + "fill_water_fill_cup.ply",
+        mpm_init_pos, shs, opacity, mpm_init_cov ,fill_water_fill_cup_scale, rotation ,fill_water_fill_cup_mask)
